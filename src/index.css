@@ -1,0 +1,94 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+  DESIGN TOKENS — CoreTracker Design System v2.4 (Neubrutalist · ATS)
+  Extracted from "CoreTracker Design System.html". The whole UI resolves to
+  these variables, so this block is the single source of visual truth.
+*/
+:root {
+  /* Surfaces */
+  --bg: #f1eadb;        /* warm paper canvas */
+  --surface: #ffffff;   /* cards, inputs, rows */
+  --surface-2: #e9e0cd; /* deeper paper for hover/zebra */
+  --ink: #141210;       /* near-black ink */
+  --ink-2: #4a463c;     /* muted warm-gray text */
+  --border: #141210;    /* borders are always ink */
+
+  /* Accent + semantics (all paired with an ink border in components) */
+  --accent: #ff6a1f;      /* tangerine */
+  --accent-ink: #141210;  /* text on tangerine */
+  --accent-soft: #ffe3d0; /* light tangerine tint */
+  --yellow: #f7c948;
+  --green: #1e7a46;
+  --red: #e23b2e;
+  --blue: #2c7dc0;
+  --purple: #7a3e9c;
+
+  /* Radii — sharp for data, pill for interactive tags */
+  --radius: 0px;
+  --radius-lg: 0px;
+  --radius-sm: 0px;
+
+  /* Hard, offset shadows — no blur. The signature move. */
+  --shadow-sm: 3px 3px 0 0 var(--ink);
+  --shadow-md: 5px 5px 0 0 var(--ink);
+  --shadow-lg: 8px 8px 0 0 rgba(20, 18, 16, 0.9);
+
+  --font-display: 'Space Grotesk', ui-sans-serif, system-ui, sans-serif;
+  --font-body: 'Space Grotesk', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'Space Mono', ui-monospace, monospace;
+
+  /* Score bands: strong green, moderate yellow, weak red */
+  --score-strong: #1e7a46;
+  --score-moderate: #b5760a;
+  --score-weak: #e23b2e;
+
+  /* Status semantics */
+  --status-to_apply: #141210;
+  --status-applied: #2c7dc0;
+  --status-interviewing: #7a3e9c;
+  --status-offer: #1e7a46;
+  --status-rejected: #e23b2e;
+  --status-ghosted: #8a7f6d;
+
+  --danger: #e23b2e;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+  min-height: 100vh;
+}
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  font-family: var(--font-display);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.05;
+}
+
+/* Tabular figures everywhere numbers matter (mono utility class). */
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
