@@ -7,6 +7,7 @@ import { setJobStatus } from '../lib/statusChange';
 import { daysSince } from '../lib/format';
 import { scoreChipClass } from '../lib/scoreColor';
 import { isNoResponse } from '../lib/pipeline';
+import { usePendingDeletionIds } from '../lib/usePendingDeletions';
 import { cx } from '../components/ui/primitives';
 import { JobDetailPanel } from '../components/JobDetailPanel';
 
@@ -79,8 +80,15 @@ function Card({
 }
 
 export function KanbanView() {
-  const jobs = useLiveQuery(() => db.jobs.toArray(), []) ?? [];
+  const allJobs = useLiveQuery(() => db.jobs.toArray(), []) ?? [];
   const resume = useLiveQuery(() => db.resume.get('base'), []);
+  // Rows mid-undo-window are hidden immediately even though the DB delete is
+  // still pending — see lib/undoableDelete.ts.
+  const pendingDeletionIds = usePendingDeletionIds();
+  const jobs = useMemo(
+    () => allJobs.filter((j) => !pendingDeletionIds.has(j.id)),
+    [allJobs, pendingDeletionIds],
+  );
   const [detailId, setDetailId] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState<Set<JobStatus>>(new Set(COLLAPSED_BY_DEFAULT));
   const [dragOverCol, setDragOverCol] = useState<JobStatus | null>(null);

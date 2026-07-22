@@ -3,7 +3,8 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import type { Job, JobStatus } from '../types/types';
 import { JOB_STATUSES, STATUS_LABELS } from '../types/types';
 import { db, RESUME_ID } from '../lib/db/db';
-import { updateJob, deleteJob } from '../lib/jobs';
+import { updateJob } from '../lib/jobs';
+import { scheduleDelete } from '../lib/undoableDelete';
 import { setJobStatus } from '../lib/statusChange';
 import { scoreOne, isStale } from '../lib/scoreActions';
 import { hasApiKey } from '../lib/api/client';
@@ -92,9 +93,11 @@ export function JobDetailPanel({
     if (job) void setJobStatus(job, next);
   };
 
-  const onDelete = async () => {
+  const onDelete = () => {
     if (job) {
-      await deleteJob(job);
+      // Soft delete: closes immediately, actual DB delete is grace-period
+      // deferred (see undoableDelete.ts) so "Undo" in the toast can cancel it.
+      scheduleDelete(job);
       setConfirmDelete(false);
       onClose();
     }

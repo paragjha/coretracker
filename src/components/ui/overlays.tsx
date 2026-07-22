@@ -1,5 +1,5 @@
-import { useEffect, type ReactNode } from 'react';
-import { Button, cx } from './primitives';
+import { useEffect, useState, type ReactNode } from 'react';
+import { Button, TextInput, cx } from './primitives';
 
 // Right-hand slide-over (the "detail drawer"). Thick ink edge, sharp corners,
 // closes on Escape and backdrop click.
@@ -58,11 +58,15 @@ export function SlideOver({
 }
 
 // Centered confirm dialog for destructive actions — hard-shadowed panel.
+// `requireText` adds the design system's "destructive action interstitial"
+// pattern: the confirm button stays disabled until the user types the exact
+// phrase, a hard guardrail for actions with no undo (e.g. wiping all data).
 export function ConfirmDialog({
   open,
   title,
   message,
   confirmLabel = 'Delete',
+  requireText,
   onConfirm,
   onCancel,
 }: {
@@ -70,17 +74,23 @@ export function ConfirmDialog({
   title: string;
   message: ReactNode;
   confirmLabel?: string;
+  requireText?: string;
   onConfirm: () => void;
   onCancel: () => void;
 }) {
+  const [typed, setTyped] = useState('');
+
   useEffect(() => {
     if (!open) return;
+    setTyped('');
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onCancel();
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [open, onCancel]);
 
   if (!open) return null;
+
+  const canConfirm = !requireText || typed === requireText;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -92,11 +102,21 @@ export function ConfirmDialog({
       >
         <h3 className="font-display text-base font-bold text-ink">{title}</h3>
         <div className="mt-2 text-sm text-ink-2">{message}</div>
+        {requireText && (
+          <div className="mt-3">
+            <TextInput
+              value={typed}
+              onChange={(e) => setTyped(e.target.value)}
+              placeholder={`Type ${requireText} to confirm`}
+              autoFocus
+            />
+          </div>
+        )}
         <div className="mt-5 flex justify-end gap-2">
           <Button variant="secondary" size="sm" onClick={onCancel}>
             Cancel
           </Button>
-          <Button variant="danger" size="sm" onClick={onConfirm}>
+          <Button variant="danger" size="sm" onClick={onConfirm} disabled={!canConfirm}>
             {confirmLabel}
           </Button>
         </div>

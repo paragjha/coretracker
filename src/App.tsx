@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { SheetView } from './views/SheetView';
 import { ResumeView } from './views/ResumeView';
 import { KanbanView } from './views/KanbanView';
+import { UndoToastHost } from './components/UndoToastHost';
 import { cx } from './components/ui/primitives';
 
 type View = 'sheet' | 'kanban' | 'resume';
@@ -43,7 +44,7 @@ function App() {
             </span>
             <h1 className="font-display text-xl font-bold tracking-tight">CoreTracker</h1>
             <span className="hidden font-mono text-[10px] font-bold uppercase tracking-wider text-ink-2 sm:inline">
-              v2 · local
+              v2 · local-first
             </span>
           </div>
           <nav className="flex items-center gap-2">
@@ -58,6 +59,7 @@ function App() {
         {view === 'kanban' && <KanbanView />}
         {view === 'resume' && <ResumeView />}
       </main>
+      <UndoToastHost />
     </div>
   );
 }

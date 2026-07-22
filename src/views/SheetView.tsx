@@ -12,6 +12,8 @@ import { computeStats, isNoResponse } from '../lib/pipeline';
 import { setJobStatus } from '../lib/statusChange';
 import { downloadCsv } from '../lib/csv';
 import { loadSampleData, clearAllData } from '../lib/sampleData';
+import { exportBackup, importBackup, shouldNudgeBackup, BackupParseError } from '../lib/backup';
+import { usePendingDeletionIds } from '../lib/usePendingDeletions';
 import { Button, Chip, StatusBadge, TextInput, cx } from '../components/ui/primitives';
 import { ConfirmDialog } from '../components/ui/overlays';
 import { AddJobForm } from '../components/AddJobForm';
@@ -103,8 +105,15 @@ function ScoreCell({ job, currentResumeVersion }: { job: Job; currentResumeVersi
 }
 
 export function SheetView() {
-  const jobs = useLiveQuery(() => db.jobs.toArray(), []) ?? [];
+  const allJobs = useLiveQuery(() => db.jobs.toArray(), []) ?? [];
   const resume = useLiveQuery(() => db.resume.get('base'), []);
+  // Rows mid-undo-window are hidden immediately even though the DB delete is
+  // still pending — see lib/undoableDelete.ts.
+  const pendingDeletionIds = usePendingDeletionIds();
+  const jobs = useMemo(
+    () => allJobs.filter((j) => !pendingDeletionIds.has(j.id)),
+    [allJobs, pendingDeletionIds],
+  );
 
   // Open onto "what should I apply to next".
   const [statusFilter, setStatusFilter] = useState<JobStatus | 'all'>('to_apply');
@@ -119,6 +128,10 @@ export function SheetView() {
   const [dragOver, setDragOver] = useState(false);
   const [confirmClear, setConfirmClear] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const backupInputRef = useRef<HTMLInputElement>(null);
+  const [backupMessage, setBackupMessage] = useState<string | null>(null);
+  const [backupError, setBackupError] = useState<string | null>(null);
+  const [nudgeDismissed, setNudgeDismissed] = useState(false);
 
   const { items, addImages, removeItem, reviewItem, pendingCount } = useScreenshotQueue();
   const failedItems = items.filter((i) => i.status === 'rejected' || i.status === 'failed');
@@ -145,6 +158,28 @@ export function SheetView() {
       setRescoring(false);
     }
   };
+
+  const onExportBackup = async () => {
+    setBackupError(null);
+    setBackupMessage(null);
+    await exportBackup();
+    setBackupMessage('Backup downloaded.');
+  };
+
+  const onImportBackupFile = async (file: File) => {
+    setBackupError(null);
+    setBackupMessage(null);
+    try {
+      const result = await importBackup(file);
+      const parts = [`${result.jobsAdded} new`, `${result.jobsUpdated} updated`];
+      if (result.resumeRestored) parts.push('resume restored');
+      setBackupMessage(`Import complete — ${parts.join(', ')}.`);
+    } catch (e) {
+      setBackupError(e instanceof BackupParseError ? e.message : 'Import failed — check the file and try again.');
+    }
+  };
+
+  const showBackupNudge = !nudgeDismissed && shouldNudgeBackup(jobs.length);
 
   // The to_apply view defaults to score descending — "what should I apply to
   // next." Runs on entering the filter; the user can re-sort afterward.
@@ -364,10 +399,35 @@ export function SheetView() {
           variant="secondary"
           onClick={() => downloadCsv(jobs)}
           disabled={jobs.length === 0}
-          title="Export the whole sheet as CSV"
+          title="Export the whole sheet as CSV (spreadsheet-friendly, lossy)"
         >
           Export CSV
         </Button>
+        <Button
+          variant="secondary"
+          onClick={() => void onExportBackup()}
+          title="Full lossless backup — jobs, resume, screenshots (JSON)"
+        >
+          Export backup
+        </Button>
+        <Button
+          variant="secondary"
+          onClick={() => backupInputRef.current?.click()}
+          title="Restore or merge from a backup JSON file"
+        >
+          Import backup
+        </Button>
+        <input
+          ref={backupInputRef}
+          type="file"
+          accept="application/json,.json"
+          className="hidden"
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f) void onImportBackupFile(f);
+            e.target.value = '';
+          }}
+        />
         {jobs.length > 0 && (
           <Button
             variant="ghost"
@@ -407,6 +467,42 @@ export function SheetView() {
               </button>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* Backup feedback */}
+      {(backupMessage || backupError) && (
+        <div
+          className={cx(
+            'mt-3 flex items-center justify-between border-[3px] border-border px-3 py-2 text-xs font-bold shadow-sm',
+            backupError ? 'bg-red text-white' : 'bg-surface text-ink',
+          )}
+        >
+          <span>{backupError ?? backupMessage}</span>
+          <button
+            className="ml-3 underline"
+            onClick={() => {
+              setBackupMessage(null);
+              setBackupError(null);
+            }}
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+
+      {/* Quiet backup nudge — enough data at stake, or overdue on cadence */}
+      {showBackupNudge && (
+        <div className="mt-3 flex items-center justify-between border-[3px] border-border bg-yellow px-3 py-2 text-xs font-bold text-ink shadow-sm">
+          <span>Back up your data — it only lives in this browser.</span>
+          <span className="flex items-center gap-3">
+            <button className="underline" onClick={() => void onExportBackup()}>
+              Back up now
+            </button>
+            <button className="underline" onClick={() => setNudgeDismissed(true)}>
+              Dismiss
+            </button>
+          </span>
         </div>
       )}
 
@@ -488,8 +584,9 @@ export function SheetView() {
       <ConfirmDialog
         open={confirmClear}
         title="Clear all data?"
-        message="This permanently deletes every job, your resume, and stored screenshots from this browser. Export a CSV first if you want a backup."
+        message="This permanently deletes every job, your resume, and stored screenshots from this browser — with no undo. Export a backup first if you want one."
         confirmLabel="Clear everything"
+        requireText="CLEAR"
         onConfirm={() => {
           void clearAllData();
           setConfirmClear(false);
