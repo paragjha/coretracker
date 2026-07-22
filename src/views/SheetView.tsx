@@ -7,6 +7,7 @@ import { formatDate } from '../lib/format';
 import { scoreChipClass } from '../lib/scoreColor';
 import { useScreenshotQueue } from '../lib/screenshotQueue';
 import { hasApiKey, QuotaExceededError } from '../lib/api/client';
+import { looksLikeUrl } from '../lib/api/fetchJd';
 import { isStale, rescoreAllStale, scoreOne } from '../lib/scoreActions';
 import { computeStats, isNoResponse } from '../lib/pipeline';
 import { setJobStatus } from '../lib/statusChange';
@@ -207,6 +208,7 @@ export function SheetView() {
   const [columnMenuOpen, setColumnMenuOpen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const [addText, setAddText] = useState<string | undefined>(undefined);
+  const [addUrl, setAddUrl] = useState<string | undefined>(undefined);
   const [detailId, setDetailId] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const [confirmClear, setConfirmClear] = useState(false);
@@ -299,9 +301,17 @@ export function SheetView() {
         return;
       }
       const text = e.clipboardData?.getData('text/plain') ?? '';
-      // Threshold avoids hijacking small incidental pastes; a JD is long.
-      if (text.trim().length > 40) {
+      // A bare link goes to the fetcher (the "WhatsApp the link to myself"
+      // path); a long blob of prose goes to the sorter. The length threshold
+      // avoids hijacking small incidental pastes.
+      if (looksLikeUrl(text)) {
         e.preventDefault();
+        setAddText(undefined);
+        setAddUrl(text.trim());
+        setAddOpen(true);
+      } else if (text.trim().length > 40) {
+        e.preventDefault();
+        setAddUrl(undefined);
         setAddText(text);
         setAddOpen(true);
       }
@@ -516,6 +526,7 @@ export function SheetView() {
         <Button
           onClick={() => {
             setAddText(undefined);
+            setAddUrl(undefined);
             setAddOpen(true);
           }}
         >
@@ -666,9 +677,11 @@ export function SheetView() {
       <AddJobForm
         open={addOpen}
         initialText={addText}
+        initialUrl={addUrl}
         onClose={() => {
           setAddOpen(false);
           setAddText(undefined);
+          setAddUrl(undefined);
         }}
       />
       <JobDetailPanel jobId={detailId} onClose={() => setDetailId(null)} />

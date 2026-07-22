@@ -5,29 +5,35 @@ import { getResume } from '../lib/db/db';
 import { scoreJob } from '../lib/api/score';
 import { extractFromText, NotAJobPostingError, ExtractionParseError } from '../lib/api/extract';
 import { hasApiKey } from '../lib/api/client';
-import { Button, Segmented, TextArea, cx } from './ui/primitives';
+import { fetchJobDescription, JdFetchFailed } from '../lib/api/fetchJd';
+import { Button, Segmented, TextArea, TextInput, cx } from './ui/primitives';
 import { SlideOver } from './ui/overlays';
 import { JobFields, emptyDraft, draftFromExtraction, type JobDraft } from './JobFields';
 
-type Mode = 'paste' | 'manual';
+type Mode = 'link' | 'paste' | 'manual';
 
-// Manual entry, or "smart paste": drop the whole posting and let the model sort
-// it into fields for review before the row is created. `initialText` lets the
-// sheet hand off a pasted JD — it opens straight into paste mode and auto-sorts.
+// Three ways in: paste a link (fetched server-side, then sorted), paste the
+// whole posting, or type it manually. `initialText` lets the sheet hand off
+// something pasted onto the grid — a URL opens link mode, prose opens paste
+// mode — and either way it runs automatically.
 export function AddJobForm({
   open,
   onClose,
   initialText,
+  initialUrl,
 }: {
   open: boolean;
   onClose: () => void;
   initialText?: string;
+  initialUrl?: string;
 }) {
   const [draft, setDraft] = useState<JobDraft>(emptyDraft);
   const [saving, setSaving] = useState(false);
   const [scoring, setScoring] = useState(false);
-  const [mode, setMode] = useState<Mode>(hasApiKey() ? 'paste' : 'manual');
+  const [mode, setMode] = useState<Mode>(hasApiKey() ? 'link' : 'manual');
   const [blob, setBlob] = useState('');
+  const [url, setUrl] = useState('');
+  const [fetching, setFetching] = useState(false);
   const [extracting, setExtracting] = useState(false);
   const [pasteError, setPasteError] = useState<string | null>(null);
   const [duplicateOf, setDuplicateOf] = useState<Job | null>(null);
@@ -38,9 +44,10 @@ export function AddJobForm({
   const reset = () => {
     setDraft(emptyDraft());
     setBlob('');
+    setUrl('');
     setPasteError(null);
     setDuplicateOf(null);
-    setMode(hasApiKey() ? 'paste' : 'manual');
+    setMode(hasApiKey() ? 'link' : 'manual');
   };
 
   const close = () => {
@@ -48,20 +55,46 @@ export function AddJobForm({
     onClose();
   };
 
-  const extract = async (source: string = blob) => {
+  /**
+   * Fetches the posting server-side, then hands the text to the same extractor
+   * the paste flow uses. On failure it falls back to paste mode rather than
+   * dead-ending — the manual path always remains available.
+   */
+  const fetchFromLink = async (source: string = url) => {
+    const target = source.trim();
+    if (!target || fetching) return;
+    setFetching(true);
+    setPasteError(null);
+    try {
+      const fetched = await fetchJobDescription(target);
+      setBlob(fetched.text);
+      // Keep the source link so it lands in Apply URL — which also makes the
+      // duplicate check work on re-adds of the same posting.
+      await extract(fetched.text, { applyUrl: fetched.sourceUrl });
+    } catch (e) {
+      setMode('paste');
+      setPasteError(
+        `${e instanceof JdFetchFailed ? e.message : 'Could not fetch that link.'} Paste the description instead.`,
+      );
+    } finally {
+      setFetching(false);
+    }
+  };
+
+  const extract = async (source: string = blob, seed?: Partial<JobDraft>) => {
     if (!source.trim() || extracting) return;
     setExtracting(true);
     setPasteError(null);
     try {
       const result = await extractFromText(source);
-      setDraft((d) => ({ ...draftFromExtraction(result), notes: d.notes }));
+      setDraft((d) => ({ ...draftFromExtraction(result), notes: d.notes, ...seed }));
       setMode('manual'); // drop into the fields to review what was parsed
     } catch (e) {
       if (e instanceof NotAJobPostingError) {
         setPasteError("That doesn't look like a job posting. Check the text or fill fields manually.");
       } else if (e instanceof ExtractionParseError) {
         // Nothing lost: keep the pasted text as the JD and let the user fill the rest.
-        setDraft((d) => ({ ...d, jdText: source }));
+        setDraft((d) => ({ ...d, jdText: source, ...seed }));
         setMode('manual');
         setPasteError('Could not auto-sort the fields — your text is in the JD box; fill the rest.');
       } else {
@@ -72,10 +105,20 @@ export function AddJobForm({
     }
   };
 
-  // Handoff from a sheet paste: seed the pasted text and auto-sort (or, without
-  // a key, drop it into the JD box for manual entry). Runs once per open.
+  // Handoff from the sheet: a pasted link goes straight to the fetcher, pasted
+  // prose to the sorter (or, without a key, into the JD box for manual entry).
+  // Runs once per open.
   useEffect(() => {
-    if (!open || !initialText?.trim()) return;
+    if (!open) return;
+
+    if (initialUrl?.trim()) {
+      setMode('link');
+      setUrl(initialUrl);
+      if (hasApiKey()) void fetchFromLink(initialUrl);
+      return;
+    }
+
+    if (!initialText?.trim()) return;
     if (hasApiKey()) {
       setMode('paste');
       setBlob(initialText);
@@ -134,7 +177,14 @@ export function AddJobForm({
           <Button variant="secondary" onClick={close}>
             Cancel
           </Button>
-          {mode === 'paste' ? (
+          {mode === 'link' ? (
+            <Button
+              onClick={() => void fetchFromLink()}
+              disabled={!url.trim() || fetching || extracting}
+            >
+              {fetching ? 'Fetching…' : extracting ? 'Sorting…' : 'Fetch & review'}
+            </Button>
+          ) : mode === 'paste' ? (
             <Button onClick={() => extract()} disabled={!blob.trim() || extracting}>
               {extracting ? 'Sorting…' : 'Extract & review'}
             </Button>
@@ -150,6 +200,7 @@ export function AddJobForm({
         <div className="mb-4">
           <Segmented<Mode>
             options={[
+              { value: 'link', label: 'From link' },
               { value: 'paste', label: 'Paste & sort' },
               { value: 'manual', label: 'Manual entry' },
             ]}
@@ -159,7 +210,33 @@ export function AddJobForm({
         </div>
       )}
 
-      {mode === 'paste' ? (
+      {mode === 'link' ? (
+        <div className="space-y-3">
+          <p className="text-sm text-ink-2">
+            Paste a job link — LinkedIn, Greenhouse, Lever, or most job boards. The posting is
+            fetched and sorted into fields for you to review.
+          </p>
+          <TextInput
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                void fetchFromLink();
+              }
+            }}
+            placeholder="https://www.linkedin.com/jobs/view/…"
+            autoFocus
+          />
+          {(fetching || extracting) && (
+            <p className="flex items-center gap-2 text-xs font-bold text-ink-2">
+              <span className="h-3 w-3 animate-spin rounded-full border-2 border-accent border-t-transparent" />
+              {fetching ? 'Fetching the posting…' : 'Sorting the fields…'}
+            </p>
+          )}
+          {pasteError && <p className="text-xs font-bold text-weak">{pasteError}</p>}
+        </div>
+      ) : mode === 'paste' ? (
         <div className="space-y-3">
           <p className="text-sm text-ink-2">
             Paste the entire job posting — the tool sorts it into fields for you to review before
