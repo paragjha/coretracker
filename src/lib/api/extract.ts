@@ -23,7 +23,7 @@ Schema:
 Rules:
 - null for anything not visible. Never guess a company from a logo you are unsure of.
 - jdText should be the complete readable text of the posting, cleaned of UI chrome (like/share buttons, "see more" labels).
-- skillsRequired: only skills the posting explicitly asks for, not skills merely mentioned in the company description.
+- skillsRequired: only skills the posting explicitly asks for, not skills merely mentioned in the company description. Prefer concrete, verifiable skills (tools, technologies, methods, domain expertise). Omit generic soft skills like "communication", "collaboration", "teamwork", or "problem-solving" unless the posting treats one as a central, differentiating requirement.
 - If the image is not a job posting, return {"error": "not_a_job_posting"}.`;
 
 // Same schema, adapted for pasted text (the "smart paste" path in Add job).
@@ -47,7 +47,7 @@ Schema:
 Rules:
 - null for anything not present in the text. Do not invent details.
 - jdText: the complete posting text, stripped of obvious site chrome (nav links, cookie notices, "apply" button labels) but otherwise unchanged.
-- skillsRequired: only skills the posting explicitly requires, not skills merely mentioned in the company description.
+- skillsRequired: only skills the posting explicitly requires, not skills merely mentioned in the company description. Prefer concrete, verifiable skills (tools, technologies, methods, domain expertise). Omit generic soft skills like "communication", "collaboration", "teamwork", or "problem-solving" unless the posting treats one as a central, differentiating requirement.
 - If the text is clearly not a job posting, return {"error": "not_a_job_posting"}.`;
 
 // Image types Gemini vision accepts. Screenshots are ~always png/jpeg/webp.

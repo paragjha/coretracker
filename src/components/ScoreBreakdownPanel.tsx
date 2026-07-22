@@ -37,8 +37,15 @@ export function ScoreBreakdownPanel({ job, stale }: { job: Job; stale: boolean }
 
       {verdict && <p className="mt-2.5 text-sm text-ink">{verdict}</p>}
 
+      {/* Show the role's stated requirement alongside the verdict — otherwise
+          "over-qualified" reads as a bug when it's actually correct. */}
       <p className="mt-3 font-mono text-[11px] font-bold uppercase tracking-wide text-ink-2">
         {EXP_FIT_LABEL[experienceFit]}
+        {job.experienceRequired && (
+          <span className="font-normal normal-case tracking-normal">
+            {' '}— role asks {job.experienceRequired}
+          </span>
+        )}
       </p>
 
       {matchedSkills.length > 0 && (

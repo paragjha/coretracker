@@ -42,6 +42,49 @@ export async function createJob(input: NewJobInput): Promise<Job> {
   return job;
 }
 
+/** Strips tracking params and trailing slashes so the same posting compares equal. */
+function normalizeUrl(url: string): string | null {
+  const trimmed = url.trim();
+  if (!trimmed) return null;
+  try {
+    const u = new URL(trimmed);
+    // Aggregators append utm_*/refId/trackingId that differ per visit.
+    return `${u.hostname.replace(/^www\./, '')}${u.pathname.replace(/\/+$/, '')}`.toLowerCase();
+  } catch {
+    return trimmed.toLowerCase();
+  }
+}
+
+const norm = (s: string | undefined) => (s ?? '').trim().toLowerCase();
+
+/**
+ * Finds an existing job that looks like the same posting — same apply URL, or
+ * same company + role title. Aggregators (and re-adds) create silent
+ * duplicates otherwise; two identical rows with different scores read as a bug.
+ */
+export async function findDuplicate(
+  candidate: { company: string; roleTitle: string; applyUrl?: string },
+  excludeId?: string,
+): Promise<Job | null> {
+  const existing = await db.jobs.toArray();
+  const candidateUrl = candidate.applyUrl ? normalizeUrl(candidate.applyUrl) : null;
+
+  for (const job of existing) {
+    if (excludeId && job.id === excludeId) continue;
+    if (candidateUrl && job.applyUrl && normalizeUrl(job.applyUrl) === candidateUrl) {
+      return job;
+    }
+    if (
+      norm(job.company) &&
+      norm(job.company) === norm(candidate.company) &&
+      norm(job.roleTitle) === norm(candidate.roleTitle)
+    ) {
+      return job;
+    }
+  }
+  return null;
+}
+
 export async function updateJob(id: string, patch: Partial<Job>): Promise<void> {
   await db.jobs.update(id, patch);
 }

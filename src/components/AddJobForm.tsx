@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { createJob } from '../lib/jobs';
+import { createJob, findDuplicate } from '../lib/jobs';
+import { STATUS_LABELS, type Job } from '../types/types';
 import { getResume } from '../lib/db/db';
 import { scoreJob } from '../lib/api/score';
 import { extractFromText, NotAJobPostingError, ExtractionParseError } from '../lib/api/extract';
@@ -29,6 +30,7 @@ export function AddJobForm({
   const [blob, setBlob] = useState('');
   const [extracting, setExtracting] = useState(false);
   const [pasteError, setPasteError] = useState<string | null>(null);
+  const [duplicateOf, setDuplicateOf] = useState<Job | null>(null);
 
   const patch = (p: Partial<JobDraft>) => setDraft((d) => ({ ...d, ...p }));
   const valid = draft.company.trim() !== '' && draft.roleTitle.trim() !== '';
@@ -37,6 +39,7 @@ export function AddJobForm({
     setDraft(emptyDraft());
     setBlob('');
     setPasteError(null);
+    setDuplicateOf(null);
     setMode(hasApiKey() ? 'paste' : 'manual');
   };
 
@@ -84,8 +87,21 @@ export function AddJobForm({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
-  const save = async () => {
+  // `skipDupeCheck` is a parameter rather than state because "Add anyway" calls
+  // save() immediately — a setState wouldn't have flushed in time.
+  const save = async (skipDupeCheck = false) => {
     if (!valid || saving) return;
+
+    // Warn once on a likely duplicate (same apply URL, or same company+role).
+    // Aggregators re-post the same job, and a silent double-add reads as a bug.
+    if (!skipDupeCheck) {
+      const dupe = await findDuplicate(draft);
+      if (dupe) {
+        setDuplicateOf(dupe);
+        return;
+      }
+    }
+
     setSaving(true);
     try {
       const job = await createJob({ ...draft, jdSource: 'paste' });
@@ -123,7 +139,7 @@ export function AddJobForm({
               {extracting ? 'Sorting…' : 'Extract & review'}
             </Button>
           ) : (
-            <Button onClick={save} disabled={!valid || saving}>
+            <Button onClick={() => void save()} disabled={!valid || saving}>
               {scoring ? 'Scoring…' : saving ? 'Saving…' : 'Add job'}
             </Button>
           )}
@@ -163,6 +179,33 @@ export function AddJobForm({
           {pasteError && (
             <div className="border-[3px] border-border bg-yellow p-2.5 text-xs font-bold text-ink">
               {pasteError}
+            </div>
+          )}
+          {duplicateOf && (
+            <div className="border-[3px] border-border bg-yellow p-3 text-xs text-ink">
+              <p className="font-bold">
+                Looks like you already have this one — {duplicateOf.company} ·{' '}
+                {duplicateOf.roleTitle}
+                {duplicateOf.status ? ` (${STATUS_LABELS[duplicateOf.status]})` : ''}.
+              </p>
+              <p className="mt-1">
+                Add it anyway if these are genuinely two different postings.
+              </p>
+              <div className="mt-2 flex gap-2">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => {
+                    setDuplicateOf(null);
+                    void save(true);
+                  }}
+                >
+                  Add anyway
+                </Button>
+                <Button variant="ghost" size="sm" onClick={close}>
+                  Cancel
+                </Button>
+              </div>
             </div>
           )}
           <JobFields value={draft} onChange={patch} />

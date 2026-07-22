@@ -9,12 +9,24 @@ export function isNoResponse(job: Job): boolean {
   return job.status === 'applied' && daysSince(job.statusChangedAt) >= NO_RESPONSE_DAYS;
 }
 
+// An application only counts toward the response rate once it's had a fair
+// chance to be answered. Before that it's neither a reply nor a silence.
+export const RESPONSE_GRACE_DAYS = 7;
+
 export interface PipelineStats {
   toApply: number;
   appliedThisWeek: number;
   interviewing: number;
-  responseRate: number | null; // fraction 0..1, or null when nothing applied
+  /** Replies ÷ applications older than the grace period. null = not measurable yet. */
+  responseRate: number | null;
+  /** Applications old enough to count toward responseRate (the denominator). */
+  responseEligible: number;
   totalApplied: number;
+}
+
+/** Heard back in any form — a rejection is a reply; silence and ghosting are not. */
+function isReply(status: Job['status']): boolean {
+  return status === 'interviewing' || status === 'offer' || status === 'rejected';
 }
 
 export function computeStats(jobs: Job[]): PipelineStats {
@@ -25,18 +37,23 @@ export function computeStats(jobs: Job[]): PipelineStats {
   let interviewing = 0;
   let appliedThisWeek = 0;
   let totalApplied = 0; // reached applied stage or beyond
-  let responded = 0; // heard back: interviewing / offer / rejected
+  let responseEligible = 0; // applied long enough ago to expect an answer
+  let replies = 0;
 
   for (const job of jobs) {
     if (job.status === 'to_apply') toApply++;
     if (job.status === 'interviewing') interviewing++;
+    if (job.status !== 'to_apply') totalApplied++;
 
-    if (job.status !== 'to_apply') {
-      totalApplied++;
-      if (['interviewing', 'offer', 'rejected'].includes(job.status)) responded++;
-    }
-    if (job.dateApplied && new Date(job.dateApplied).getTime() >= weekAgo) {
-      appliedThisWeek++;
+    if (job.dateApplied) {
+      const appliedAt = new Date(job.dateApplied).getTime();
+      if (appliedAt >= weekAgo) appliedThisWeek++;
+      // Only applications past the grace period form the denominator, so a
+      // fresh batch of applications can't drag the rate to a misleading 0%.
+      if (daysSince(job.dateApplied) >= RESPONSE_GRACE_DAYS) {
+        responseEligible++;
+        if (isReply(job.status)) replies++;
+      }
     }
   }
 
@@ -45,6 +62,7 @@ export function computeStats(jobs: Job[]): PipelineStats {
     appliedThisWeek,
     interviewing,
     totalApplied,
-    responseRate: totalApplied > 0 ? responded / totalApplied : null,
+    responseEligible,
+    responseRate: responseEligible > 0 ? replies / responseEligible : null,
   };
 }

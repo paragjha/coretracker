@@ -6,7 +6,7 @@ import { db } from '../lib/db/db';
 import { formatDate } from '../lib/format';
 import { scoreChipClass } from '../lib/scoreColor';
 import { useScreenshotQueue } from '../lib/screenshotQueue';
-import { hasApiKey } from '../lib/api/client';
+import { hasApiKey, QuotaExceededError } from '../lib/api/client';
 import { isStale, rescoreAllStale, scoreOne } from '../lib/scoreActions';
 import { computeStats, isNoResponse } from '../lib/pipeline';
 import { setJobStatus } from '../lib/statusChange';
@@ -60,7 +60,7 @@ const DEFAULT_VISIBLE: ColumnKey[] = COLUMNS.map((c) => c.key);
 
 function ScoreCell({ job, currentResumeVersion }: { job: Job; currentResumeVersion?: number }) {
   const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
+  const [err, setErr] = useState<{ label: string; detail: string } | null>(null);
 
   // Unscored: offer a one-click "Score" right in the cell (needs a key + a
   // saved resume). Clicking must not open the row's detail drawer.
@@ -68,22 +68,35 @@ function ScoreCell({ job, currentResumeVersion }: { job: Job; currentResumeVersi
     if (!hasApiKey()) return <span className="text-ink-2/50">—</span>;
     return (
       <button
-        title={err ?? 'Score this job against your saved resume'}
+        title={err?.detail ?? 'Click to score this job against your saved resume'}
         onClick={(e) => {
           e.stopPropagation();
           if (busy) return;
           setBusy(true);
           setErr(null);
           scoreOne(job)
-            .catch((x) => setErr(x instanceof Error ? x.message : String(x)))
+            .catch((x) => {
+              const detail = x instanceof Error ? x.message : String(x);
+              // Label the actual cause — a quota block is not a missing resume.
+              const label =
+                x instanceof QuotaExceededError
+                  ? 'quota — retry'
+                  : /resume/i.test(detail)
+                    ? 'needs resume'
+                    : 'failed — retry';
+              setErr({ label, detail });
+            })
             .finally(() => setBusy(false));
         }}
         className={cx(
-          'rounded-full border-2 border-border px-2.5 py-0.5 text-xs font-bold transition-colors',
+          'inline-flex items-center gap-1.5 rounded-full border-2 border-border px-2.5 py-0.5 text-xs font-bold transition-colors',
           err ? 'bg-yellow text-ink' : 'bg-surface text-ink hover:bg-accent hover:text-accent-ink',
         )}
       >
-        {busy ? 'Scoring…' : err ? 'needs resume' : 'Score'}
+        {busy && (
+          <span className="h-2.5 w-2.5 animate-spin rounded-full border-2 border-ink border-t-transparent" />
+        )}
+        {busy ? 'Scoring…' : (err?.label ?? 'Score')}
       </button>
     );
   }
@@ -101,6 +114,76 @@ function ScoreCell({ job, currentResumeVersion }: { job: Job; currentResumeVersi
       {job.matchScore}
       {stale && '*'}
     </span>
+  );
+}
+
+// The status pill is the fastest place to log a change — one click here beats
+// open drawer → dropdown → close, and it keeps "Applied" dates honest.
+function StatusCell({ job }: { job: Job }) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div className="inline-flex items-center gap-2">
+      <div className="relative inline-flex">
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            setOpen((o) => !o);
+          }}
+          title="Change status"
+          aria-haspopup="menu"
+          aria-expanded={open}
+          className="rounded-full transition-transform hover:-translate-y-[1px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+        >
+          <StatusBadge status={job.status} />
+        </button>
+        {open && (
+          <>
+            <div
+              className="fixed inset-0 z-10"
+              onClick={(e) => {
+                e.stopPropagation();
+                setOpen(false);
+              }}
+            />
+            <div
+              role="menu"
+              className="absolute left-0 top-full z-20 mt-1.5 flex w-44 flex-col border-[3px] border-border bg-surface p-1 shadow-md"
+            >
+              {JOB_STATUSES.map((s) => (
+                <button
+                  key={s}
+                  role="menuitem"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void setJobStatus(job, s);
+                    setOpen(false);
+                  }}
+                  className={cx(
+                    'px-2 py-1 text-left text-xs font-bold hover:bg-surface-2',
+                    s === job.status && 'bg-accent-soft text-accent-ink',
+                  )}
+                >
+                  {STATUS_LABELS[s]}
+                </button>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
+      {isNoResponse(job) && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            void setJobStatus(job, 'ghosted');
+          }}
+          title="No status change for 14+ days. Click to mark as ghosted."
+          className="rounded-full border-2 border-border bg-yellow px-2 py-0.5 text-[11px] font-bold text-ink hover:bg-status-ghosted hover:text-white"
+        >
+          no response → ghost
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -150,10 +233,19 @@ export function SheetView() {
   const onRescoreAll = async () => {
     if (rescoring || staleCount === 0) return;
     setRescoring(true);
+    setBackupError(null);
+    setBackupMessage(null);
     try {
       await rescoreAllStale({ includeNonToApply });
     } catch (e) {
-      console.warn('Rescore-all failed:', e);
+      // Quota is the common failure here — say so plainly instead of a raw dump.
+      setBackupError(
+        e instanceof QuotaExceededError
+          ? 'Scoring quota reached — the jobs scored so far are saved. Try the rest later.'
+          : e instanceof Error
+            ? e.message
+            : 'Rescore failed.',
+      );
     } finally {
       setRescoring(false);
     }
@@ -265,23 +357,7 @@ export function SheetView() {
       case 'roleTitle':
         return job.roleTitle;
       case 'status':
-        return (
-          <span className="inline-flex items-center gap-2">
-            <StatusBadge status={job.status} />
-            {isNoResponse(job) && (
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  void setJobStatus(job, 'ghosted');
-                }}
-                title="No status change for 14+ days. Click to mark as ghosted."
-                className="rounded-full border-2 border-border bg-yellow px-2 py-0.5 text-[11px] font-bold text-ink hover:bg-status-ghosted hover:text-white"
-              >
-                no response → ghost
-              </button>
-            )}
-          </span>
-        );
+        return <StatusCell job={job} />;
       case 'matchScore':
         return <ScoreCell job={job} currentResumeVersion={resume?.version} />;
       case 'dateAdded':
@@ -540,7 +616,19 @@ export function SheetView() {
                       </Button>
                     </div>
                   ) : (
-                    <span className="text-sm text-ink-2">Nothing matches the current filters.</span>
+                    <div className="flex flex-col items-center gap-3">
+                      <p className="text-sm text-ink-2">Nothing matches the current filters.</p>
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => {
+                          setStatusFilter('all');
+                          setSearch('');
+                        }}
+                      >
+                        Clear filters
+                      </Button>
+                    </div>
                   )}
                 </td>
               </tr>
@@ -549,7 +637,20 @@ export function SheetView() {
               <tr
                 key={job.id}
                 onClick={() => setDetailId(job.id)}
-                className="cursor-pointer border-t-2 border-border/15 first:border-t-0 hover:bg-surface-2"
+                // Keyboard parity with the mouse: rows are focusable and open
+                // on Enter/Space, so a job is reachable without a pointer.
+                tabIndex={0}
+                role="button"
+                aria-label={`Open ${job.company} — ${job.roleTitle}`}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    // Ignore keys aimed at a control inside the row.
+                    if (e.target !== e.currentTarget) return;
+                    e.preventDefault();
+                    setDetailId(job.id);
+                  }
+                }}
+                className="cursor-pointer border-t-2 border-border/15 first:border-t-0 hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent"
               >
                 {shownColumns.map((c) => (
                   <td key={c.key} className="whitespace-nowrap px-4 py-2.5 text-ink-2">

@@ -21,6 +21,22 @@ Scoring rubric:
 - 20% role-type fit (is the resume's trajectory pointed at this kind of role)
 - 15% domain fit (industry, market, product type)
 
+experienceFit is the CANDIDATE measured against the ROLE's stated requirement:
+- "under" = the candidate has less experience than the role asks for
+- "match"  = the candidate is within (or close to) the stated range
+- "over"   = the candidate has substantially more experience than the role asks for
+  (e.g. a role asking 0-2 years and a candidate with 5+ years is "over")
+If the posting states no experience requirement, use "match".
+
+Hard skills carry the skills score, not soft skills:
+- Weight concrete, verifiable skills — tools, technologies, methods, domain
+  expertise (e.g. Figma, design systems, SQL, user research, prototyping).
+- Generic soft skills (communication, collaboration, teamwork, problem-solving,
+  attention to detail, time management) are near-universal and must NOT
+  meaningfully raise matchScore. Do not pad matchedSkills with them; list a
+  soft skill only if the posting treats it as a central, differentiating
+  requirement.
+
 Rules:
 - Evidence means the resume shows the skill in use, not just lists a keyword.
 - Be strict. A resume that lists "Figma" once does not fully match "advanced prototyping in Figma."

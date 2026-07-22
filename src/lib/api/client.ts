@@ -37,17 +37,22 @@ export async function generateJson(opts: GenerateOptions): Promise<string> {
       const { GoogleGenAI } = await import('@google/genai');
       client = new GoogleGenAI({ apiKey: CLIENT_KEY });
     }
-    const res = await client.models.generateContent({
-      model: opts.model,
-      contents: [{ role: 'user', parts: opts.parts }],
-      config: {
-        systemInstruction: opts.system,
-        responseMimeType: 'application/json',
-        thinkingConfig: { thinkingBudget: 0 },
-        ...(opts.temperature != null ? { temperature: opts.temperature } : {}),
-      },
-    });
-    return res.text ?? '';
+    try {
+      const res = await client.models.generateContent({
+        model: opts.model,
+        contents: [{ role: 'user', parts: opts.parts }],
+        config: {
+          systemInstruction: opts.system,
+          responseMimeType: 'application/json',
+          thinkingConfig: { thinkingBudget: 0 },
+          ...(opts.temperature != null ? { temperature: opts.temperature } : {}),
+        },
+      });
+      return res.text ?? '';
+    } catch (e) {
+      if (looksLikeQuotaError(e)) throw new QuotaExceededError();
+      throw e;
+    }
   }
 
   // Deployed: route through the same-origin proxy (key stays server-side).
@@ -64,10 +69,37 @@ export async function generateJson(opts: GenerateOptions): Promise<string> {
     } catch {
       /* non-JSON error body */
     }
+    // 429 from our own proxy rate-limit, or forwarded from Gemini's quota.
+    if (resp.status === 429 || looksLikeQuotaError(message)) {
+      throw new QuotaExceededError(message);
+    }
     throw new Error(message);
   }
   const data = (await resp.json()) as { text?: string };
   return data.text ?? '';
+}
+
+/** Daily free-tier quota (or rate limit) exhausted — retryable later, not a bug. */
+export class QuotaExceededError extends Error {
+  constructor(detail?: string) {
+    super('Scoring quota reached. Your work is saved — try again later.');
+    this.name = 'QuotaExceededError';
+    if (detail) this.cause = detail;
+  }
+}
+
+// Gemini surfaces quota problems as 429 / RESOURCE_EXHAUSTED; the SDK wraps
+// them in assorted shapes, so match on the message rather than a status field.
+function looksLikeQuotaError(e: unknown): boolean {
+  const text = (
+    typeof e === 'string' ? e : e instanceof Error ? e.message : JSON.stringify(e ?? '')
+  ).toLowerCase();
+  return (
+    text.includes('429') ||
+    text.includes('resource_exhausted') ||
+    text.includes('quota') ||
+    text.includes('rate limit')
+  );
 }
 
 /** Strips markdown fences and parses JSON; returns null on failure. */
